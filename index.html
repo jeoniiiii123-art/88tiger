@@ -478,6 +478,14 @@ function App() {
   },[]);
 
   useEffect(()=>{
+    const GITHUB_RAW = "https://raw.githubusercontent.com/jeoniiiii123-art/88tiger/main/output/data.csv";
+    const loadFromGithub = () => {
+      Papa.parse(GITHUB_RAW+"?t="+Date.now(), {
+        download:true, header:true, skipEmptyLines:true,
+        complete: res => { setRawData(res.data); setLoading(false); },
+        error: e => { setError("data.csv 로드 실패: "+e.message); setLoading(false); }
+      });
+    };
     const url = "output/data.csv?t="+Date.now();
     Papa.parse(url, {
       download: true, header: true, skipEmptyLines: true,
@@ -486,7 +494,7 @@ function App() {
         Papa.parse("data.csv?t="+Date.now(), {
           download:true, header:true, skipEmptyLines:true,
           complete: res => { setRawData(res.data); setLoading(false); },
-          error: e => { setError("data.csv 로드 실패: "+e.message); setLoading(false); }
+          error: () => loadFromGithub()
         });
       }
     });
