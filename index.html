@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>더건강한주식회사 쿠팡 광고 대시보드</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+  <style>
+    body { font-family: 'Malgun Gothic','맑은 고딕',sans-serif !important; font-style:normal !important; }
+    * { font-style:normal !important; box-sizing:border-box; }
+    .scrollbar-hide::-webkit-scrollbar{display:none}
+    .scrollbar-hide{-ms-overflow-style:none;scrollbar-width:none}
+    .tooltip-wrap { position:relative; }
+    .tooltip-box {
+      display:none; position:fixed; z-index:9999; background:#1e293b; color:#fff;
+      font-size:12px; border-radius:10px; padding:10px 13px; max-width:320px;
+      box-shadow:0 4px 24px rgba(0,0,0,.25); pointer-events:none; line-height:1.6;
+    }
+    .tooltip-wrap:hover .tooltip-box { display:block; }
+    .accordion-body { display:none; }
+    .accordion-body.open { display:table-row-group; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen">
+
+<!-- 비밀번호 화면 -->
+<div id="auth-overlay" style="position:fixed;inset:0;background:#f1f5f9;display:flex;align-items:center;justify-content:center;z-index:9999">
+  <div style="background:white;border-radius:16px;padding:40px 36px;box-shadow:0 4px 32px rgba(0,0,0,.12);width:300px;text-align:center">
+    <div style="font-size:17px;font-weight:700;color:#1e293b;margin-bottom:4px">더건강한 쿠팡 광고</div>
+    <div style="font-size:13px;color:#64748b;margin-bottom:22px">비밀번호를 입력하세요</div>
+    <input id="pw-input" type="password" placeholder="비밀번호"
+      style="width:100%;padding:10px 14px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;margin-bottom:8px;outline:none;font-family:inherit"
+      onkeydown="if(event.key==='Enter')checkPw()">
+    <div id="pw-error" style="color:#ef4444;font-size:12px;margin-bottom:8px;display:none">비밀번호가 틀렸습니다.</div>
+    <button onclick="checkPw()" style="width:100%;padding:10px;background:#f97316;color:white;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit">확인</button>
+  </div>
+</div>
+<script>
+  var _PW = "YWQyMDI2"; // ad2026
+  (function(){ if(sessionStorage.getItem("cp_auth")===_PW) document.getElementById("auth-overlay").style.display="none"; })();
+  function checkPw(){
+    var v=btoa(unescape(encodeURIComponent(document.getElementById("pw-input").value)));
+    if(v===_PW){ sessionStorage.setItem("cp_auth",_PW); document.getElementById("auth-overlay").style.display="none"; }
+    else{ document.getElementById("pw-error").style.display="block"; document.getElementById("pw-input").value=""; }
+  }
+</script>
+
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useMemo, useEffect, useCallback, useRef } = React;
+
+// ── 포맷터 ──
+const fKrw  = v => isNaN(v)||v===null||v===""? "-" : "₩" + Math.round(+v).toLocaleString("ko-KR");
+const fNum  = v => isNaN(v)||v===null||v===""? "-" : Math.round(+v).toLocaleString("ko-KR");
+const fPct  = (v,d=2) => (v===null||v===""||isNaN(v)) ? "-" : (+v*100).toFixed(d)+"%";
+const fRoas = v => (v===null||v===""||isNaN(v)) ? "-" : (+v*100).toFixed(1)+"%";
+
+const n     = v => (v===null||v===""||v==="nan"||v==="NaN"||v===undefined) ? null : +v;
+
+// ── 주차 정렬 ──
+function weekOrder(w){
+  if(!w) return 9999;
+  const m = w.match(/(\d+)월 (\d+)주차/);
+  if(!m) return 9999;
+  return parseInt(m[1])*100+parseInt(m[2]);
+}
+
+// ── 색상 뱃지 ──
+const AdTag = ({t}) => {
+  const c = t==="PA"?"bg-blue-100 text-blue-700":t==="NCA"?"bg-purple-100 text-purple-700":"bg-orange-100 text-orange-700";
+  return <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${c}`}>{t}</span>;
+};
+const BrandTag = ({b}) => {
+  const c = b==="타이거모닝"?"bg-amber-100 text-amber-700":b==="팔팔호랑이"?"bg-green-100 text-green-700":b==="BA광고"?"bg-orange-100 text-orange-700":"bg-slate-100 text-slate-500";
+  return <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${c}`}>{b}</span>;
+};
+
+// ── 툴팁 컴포넌트 ──
+function ProductCell({ row }) {
+  const [pos, setPos] = useState(null);
+  const [copied, setCopied] = useState(false);
+  const ref = useRef(null);
+
+  const handleEnter = () => {
+    if (!ref.current) return;
+    const r = ref.current.getBoundingClientRect();
+    setPos({ x: r.right + 10, y: r.top + r.height / 2 });
+  };
+  const handleLeave = () => setPos(null);
+
+  const copyId = (e) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(row.option_id||"").then(()=>{
+      setCopied(true); setTimeout(()=>setCopied(false),1800);
+    });
+  };
+
+  return (
+    <div ref={ref} className="relative" onMouseEnter={handleEnter} onMouseLeave={handleLeave}>
+      <div className="truncate max-w-[200px] text-slate-800 font-bold text-[13px] cursor-default">{row.display_name||row.full_name}</div>
+      {pos && ReactDOM.createPortal(
+        <div style={{position:"fixed",left:pos.x,top:pos.y,transform:"translateY(-50%)",zIndex:9999,pointerEvents:"all"}}
+          className="bg-slate-900 text-white text-[12px] rounded-xl px-3 py-2.5 shadow-2xl max-w-[300px] leading-relaxed border border-white/10">
+          <div className="mb-1.5 text-slate-200">{row.full_name}</div>
+          <div className="flex items-center gap-2 text-slate-400 text-[11px]">
+            <span>옵션ID: {row.option_id}</span>
+            <button onClick={copyId}
+              className="text-[11px] bg-slate-700 hover:bg-slate-600 text-white px-2 py-0.5 rounded font-bold transition-all">
+              {copied?"복사됨":"복사"}
+            </button>
+          </div>
+        </div>, document.body
+      )}
+    </div>
+  );
+}
+
+// ── KPI 카드 ──
+function KpiCard({label, value, sub, color="text-orange-600"}) {
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
+      <div className={`text-[11px] font-bold ${color} mb-1`}>{label}</div>
+      <div className="text-[18px] font-black text-slate-900">{value}</div>
+      {sub && <div className="text-[11px] text-slate-400 font-bold mt-0.5">{sub}</div>}
+    </div>
+  );
+}
+
+// ── 기간 비교 패널 ──
+function ComparePanel({ allData, convBasis }) {
+  const [dateA1,setDateA1]=useState(""); const [dateA2,setDateA2]=useState("");
+  const [dateB1,setDateB1]=useState(""); const [dateB2,setDateB2]=useState("");
+
+  const is14 = convBasis==="14일";
+
+  const calc = (d1,d2) => {
+    if(!d1||!d2) return null;
+    const rows = allData.filter(r=>r.date>=d1&&r.date<=d2);
+    const spend=rows.reduce((a,r)=>a+(n(r.spend)||0),0);
+    const imp=rows.reduce((a,r)=>a+(n(r.impressions)||0),0);
+    const clk=rows.reduce((a,r)=>a+(n(r.clicks)||0),0);
+    const rev1=rows.reduce((a,r)=>a+(n(r.revenue_1d)||0),0);
+    const rev14=rows.reduce((a,r)=>a+(n(r.revenue_14d)||0),0);
+    const rev=is14?rev14:rev1;
+    const roas=spend>0?rev/spend:0;
+    return {spend,imp,clk,rev,roas,rows:rows.length};
+  };
+  const A=calc(dateA1,dateA2), B=calc(dateB1,dateB2);
+  const diff = (a,b,higher="good") => {
+    if(!a||!b||b===0) return null;
+    const p = ((a-b)/Math.abs(b)*100);
+    const up = p>=0;
+    const good = higher==="good"?up:!up;
+    return <span className={`ml-1 text-[12px] font-bold ${good?"text-green-600":"text-red-500"}`}>
+      {up?"▲":"▼"}{Math.abs(p).toFixed(1)}%
+    </span>;
+  };
+
+  const revLabel  = `매출(${convBasis})`;
+  const roasLabel = `ROAS(${convBasis})`;
+
+  const metrics = [
+    {label:"광고비",     va:A?fKrw(A.spend):"-", vb:B?fKrw(B.spend):"-", cmp:A&&B?diff(A.spend,B.spend,"bad"):null},
+    {label:"노출수",     va:A?fNum(A.imp):"-",    vb:B?fNum(B.imp):"-",   cmp:A&&B?diff(A.imp,B.imp,"good"):null},
+    {label:"클릭수",     va:A?fNum(A.clk):"-",    vb:B?fNum(B.clk):"-",   cmp:A&&B?diff(A.clk,B.clk,"good"):null},
+    {label:revLabel,    va:A?fKrw(A.rev):"-",    vb:B?fKrw(B.rev):"-",   cmp:A&&B?diff(A.rev,B.rev,"good"):null},
+    {label:roasLabel,   va:A?fRoas(A.roas):"-",  vb:B?fRoas(B.roas):"-", cmp:A&&B?diff(A.roas,B.roas,"good"):null},
+  ];
+
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 mb-4">
+      <div className="font-black text-slate-700 text-[14px] mb-4">기간 비교</div>
+      <div className="flex flex-wrap gap-6 mb-5">
+        <div>
+          <div className="text-[12px] font-bold text-blue-600 mb-1">기간 A</div>
+          <div className="flex gap-2 items-center">
+            <input type="date" value={dateA1} onChange={e=>setDateA1(e.target.value)} className="border border-slate-200 rounded-lg px-2 py-1 text-[13px]"/>
+            <span className="text-slate-400">~</span>
+            <input type="date" value={dateA2} onChange={e=>setDateA2(e.target.value)} className="border border-slate-200 rounded-lg px-2 py-1 text-[13px]"/>
+          </div>
+        </div>
+        <div>
+          <div className="text-[12px] font-bold text-slate-500 mb-1">기간 B</div>
+          <div className="flex gap-2 items-center">
+            <input type="date" value={dateB1} onChange={e=>setDateB1(e.target.value)} className="border border-slate-200 rounded-lg px-2 py-1 text-[13px]"/>
+            <span className="text-slate-400">~</span>
+            <input type="date" value={dateB2} onChange={e=>setDateB2(e.target.value)} className="border border-slate-200 rounded-lg px-2 py-1 text-[13px]"/>
+          </div>
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[13px]">
+          <thead>
+            <tr className="text-left text-slate-500 text-[12px] border-b border-slate-100">
+              <th className="pb-2 font-bold">지표</th>
+              <th className="pb-2 font-bold text-blue-600">기간 A</th>
+              <th className="pb-2 font-bold text-slate-500">기간 B</th>
+              <th className="pb-2 font-bold">변화</th>
+            </tr>
+          </thead>
+          <tbody>
+            {metrics.map((m,i)=>(
+              <tr key={i} className="border-b border-slate-50">
+                <td className="py-2 font-bold text-slate-600">{m.label}</td>
+                <td className="py-2 font-black text-slate-900">{m.va}</td>
+                <td className="py-2 font-bold text-slate-500">{m.vb}</td>
+                <td className="py-2">{m.cmp||"-"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ── 주차별 뷰 ──
+function WeekView({ data, adType, convBasis }) {
+  const [open, setOpen] = useState({});
+
+  const toggle = (w) => setOpen(p=>({...p,[w]:!p[w]}));
+
+  const weeks = useMemo(()=>[...new Set(data.map(r=>r.week))].sort((a,b)=>weekOrder(b)-weekOrder(a)),[data]);
+
+  const weekData = useMemo(()=>{
+    const m={};
+    weeks.forEach(w=>{
+      const rows=data.filter(r=>r.week===w);
+      const days=[...new Set(rows.map(r=>r.date))].sort().reverse();
+      m[w]={rows,days};
+    });
+    return m;
+  },[data,weeks]);
+
+  const aggRows = (rows) => {
+    const spend=rows.reduce((a,r)=>a+(n(r.spend)||0),0);
+    const imp=rows.reduce((a,r)=>a+(n(r.impressions)||0),0);
+    const clk=rows.reduce((a,r)=>a+(n(r.clicks)||0),0);
+    const rev1=rows.reduce((a,r)=>a+(n(r.revenue_1d)||0),0);
+    const rev14=rows.reduce((a,r)=>a+(n(r.revenue_14d)||0),0);
+    const ord1=rows.reduce((a,r)=>a+(n(r.orders_1d)||0),0);
+    const ord14=rows.reduce((a,r)=>a+(n(r.orders_14d)||0),0);
+    const newCust=rows.reduce((a,r)=>a+(n(r.new_customers)||0),0);
+    const newRev=rows.reduce((a,r)=>a+(n(r.new_revenue)||0),0);
+    const cpm=imp>0?spend/imp*1000:null;
+    const ctr=imp>0?clk/imp:null;
+    const cpc=clk>0?spend/clk:null;
+    const roas1=spend>0?rev1/spend:null;
+    const roas14=spend>0?rev14/spend:null;
+    const newRoas=spend>0?newRev/spend:null;
+    const costPerNew=newCust>0?spend/newCust:null;
+    return {spend,imp,clk,rev1,rev14,ord1,ord14,newCust,newRev,cpm,ctr,cpc,roas1,roas14,newRoas,costPerNew};
+  };
+
+  const isConv14 = convBasis==="14일";
+
+  const renderCols = () => {
+    if(adType==="NCA") return ["날짜","광고비","노출수","클릭수","CTR","신규 고객수","고객당 비용","첫구매 매출"];
+    if(adType==="BA")  return ["날짜","광고비","노출수","클릭수","CTR","CPM","매출","ROAS"];
+    return ["날짜","광고비","노출수","클릭수","CTR","CPC","전환수","매출","ROAS"];
+  };
+  const cols = renderCols();
+
+  const renderCells = (s) => {
+    const rev   = isConv14 ? s.rev14  : s.rev1;
+    const ord   = isConv14 ? s.ord14  : s.ord1;
+    const roas  = isConv14 ? s.roas14 : s.roas1;
+    if(adType==="NCA") return [
+      fKrw(s.spend), fNum(s.imp), fNum(s.clk), fPct(s.ctr),
+      fNum(s.newCust), fKrw(s.costPerNew), fKrw(s.newRev)
+    ];
+    if(adType==="BA") return [
+      fKrw(s.spend), fNum(s.imp), fNum(s.clk), fPct(s.ctr),
+      fKrw(s.cpm), fKrw(rev), fRoas(roas)
+    ];
+    return [
+      fKrw(s.spend), fNum(s.imp), fNum(s.clk), fPct(s.ctr),
+      fKrw(s.cpc), fNum(ord), fKrw(rev), fRoas(roas)
+    ];
+  };
+
+  return (
+    <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-sm bg-white">
+      <table className="w-full text-[13px] min-w-[700px]">
+        <thead>
+          <tr className="bg-slate-50 text-slate-500 text-[12px] font-bold border-b border-slate-200">
+            {cols.map((c,i)=><th key={i} className={`px-4 py-3 ${i===0?"text-left":"text-right"} whitespace-nowrap`}>{c}</th>)}
+          </tr>
+        </thead>
+        {weeks.map(w => {
+          const {rows, days} = weekData[w];
+          const ws = aggRows(rows);
+          const isOpen = open[w];
+          return (
+            <tbody key={w}>
+              <tr className="border-b border-slate-100 cursor-pointer hover:bg-orange-50 transition-colors" onClick={()=>toggle(w)}>
+                <td className="px-4 py-3 font-black text-slate-800 flex items-center gap-2">
+                  <span className="text-slate-400 text-[11px]">{isOpen?"▼":"▶"}</span>
+                  {w}
+                </td>
+                {renderCells(ws).map((v,i)=>(
+                  <td key={i} className="px-4 py-3 text-right font-bold text-slate-700">{v}</td>
+                ))}
+              </tr>
+              {isOpen && days.map(day=>{
+                const dr = rows.filter(r=>r.date===day);
+                const ds = aggRows(dr);
+                return (
+                  <tr key={day} className="bg-slate-50/60 border-b border-slate-100">
+                    <td className="px-4 py-2 pl-10 text-slate-500 font-bold text-[12px]">{day}</td>
+                    {renderCells(ds).map((v,i)=>(
+                      <td key={i} className="px-4 py-2 text-right text-slate-500 text-[12px] font-bold">{v}</td>
+                    ))}
+                  </tr>
+                );
+              })}
+            </tbody>
+          );
+        })}
+      </table>
+    </div>
+  );
+}
+
+// ── 상품별 뷰 ──
+function ProductView({ data, adType, brand, convBasis }) {
+  const [open, setOpen] = useState({});
+  const toggle = k => setOpen(p=>({...p,[k]:!p[k]}));
+  const isConv14 = convBasis==="14일";
+  const showAllTypes = adType==="전체";
+
+  const products = useMemo(()=>{
+    const map={};
+    data.forEach(r=>{
+      const key = r.option_id+"||"+r.ad_type;
+      if(!map[key]) map[key]={...r, _spend:0, _imp:0, _clk:0, _rev1:0, _rev14:0,
+        _ord1:0,_ord14:0,_newCust:0,_newRev:0,_weekRows:{}};
+      const m=map[key];
+      m._spend+=(n(r.spend)||0); m._imp+=(n(r.impressions)||0);
+      m._clk+=(n(r.clicks)||0); m._rev1+=(n(r.revenue_1d)||0);
+      m._rev14+=(n(r.revenue_14d)||0); m._ord1+=(n(r.orders_1d)||0);
+      m._ord14+=(n(r.orders_14d)||0); m._newCust+=(n(r.new_customers)||0);
+      m._newRev+=(n(r.new_revenue)||0);
+      if(!m._weekRows[r.week]) m._weekRows[r.week]=[];
+      m._weekRows[r.week].push(r);
+    });
+    return Object.values(map).sort((a,b)=>b._spend-a._spend);
+  },[data]);
+
+  const aggRows = rows => {
+    const spend=rows.reduce((a,r)=>a+(n(r.spend)||0),0);
+    const imp=rows.reduce((a,r)=>a+(n(r.impressions)||0),0);
+    const clk=rows.reduce((a,r)=>a+(n(r.clicks)||0),0);
+    const rev1=rows.reduce((a,r)=>a+(n(r.revenue_1d)||0),0);
+    const rev14=rows.reduce((a,r)=>a+(n(r.revenue_14d)||0),0);
+    const ord1=rows.reduce((a,r)=>a+(n(r.orders_1d)||0),0);
+    const ord14=rows.reduce((a,r)=>a+(n(r.orders_14d)||0),0);
+    const newCust=rows.reduce((a,r)=>a+(n(r.new_customers)||0),0);
+    const newRev=rows.reduce((a,r)=>a+(n(r.new_revenue)||0),0);
+    const ctr=imp>0?clk/imp:null; const cpc=clk>0?spend/clk:null;
+    const cpm=imp>0?spend/imp*1000:null;
+    const roas1=spend>0?rev1/spend:null; const roas14=spend>0?rev14/spend:null;
+    const newRoas=spend>0?newRev/spend:null;
+    const costPerNew=newCust>0?spend/newCust:null;
+    return {spend,imp,clk,rev1,rev14,ord1,ord14,newCust,newRev,ctr,cpc,cpm,roas1,roas14,newRoas,costPerNew};
+  };
+
+  const headerCols = () => {
+    const base = showAllTypes ? ["유형","브랜드","상품명"] : ["상품명"];
+    if(adType==="NCA") return [...base,"광고비","노출수","클릭수","신규 고객수","고객당 비용","첫구매 매출"];
+    if(adType==="BA")  return [...base,"광고비","노출수","클릭수","CPM","매출","ROAS"];
+    return [...base,"광고비","노출수","클릭수","CPC","전환수","매출","ROAS"];
+  };
+
+  const renderDataCells = (s, at) => {
+    const rev  = isConv14 ? s.rev14  : s.rev1;
+    const ord  = isConv14 ? s.ord14  : s.ord1;
+    const roas = isConv14 ? s.roas14 : s.roas1;
+    const t = adType==="전체"?at:adType;
+    if(adType==="전체") {
+      // 통합 뷰: 헤더 7컬럼(광고비/노출수/클릭수/CPC/전환수/매출/ROAS) 통일
+      if(t==="NCA") return [fKrw(s.spend),fNum(s.imp),fNum(s.clk),fKrw(s.cpc),fNum(s.newCust),fKrw(s.newRev),"-"];
+      if(t==="BA")  return [fKrw(s.spend),fNum(s.imp),fNum(s.clk),"-","-",fKrw(rev),fRoas(roas)];
+      return [fKrw(s.spend),fNum(s.imp),fNum(s.clk),fKrw(s.cpc),fNum(ord),fKrw(rev),fRoas(roas)];
+    }
+    if(t==="NCA") return [fKrw(s.spend),fNum(s.imp),fNum(s.clk),fNum(s.newCust),fKrw(s.costPerNew),fKrw(s.newRev)];
+    if(t==="BA")  return [fKrw(s.spend),fNum(s.imp),fNum(s.clk),fKrw(s.cpm),fKrw(rev),fRoas(roas)];
+    return [fKrw(s.spend),fNum(s.imp),fNum(s.clk),fKrw(s.cpc),fNum(ord),fKrw(rev),fRoas(roas)];
+  };
+
+  const hcols = headerCols();
+
+  return (
+    <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-sm bg-white">
+      <table className="w-full text-[13px] min-w-[700px]">
+        <thead>
+          <tr className="bg-slate-50 text-slate-500 text-[12px] font-bold border-b border-slate-200">
+            {hcols.map((c,i)=><th key={i} className={`px-4 py-3 ${i<(showAllTypes?3:1)?"text-left":"text-right"} whitespace-nowrap`}>{c}</th>)}
+          </tr>
+        </thead>
+        {products.map((p,pi)=>{
+          const key=p.option_id+"||"+p.ad_type;
+          const ps=aggRows(data.filter(r=>r.option_id===p.option_id&&r.ad_type===p.ad_type));
+          const weeks=Object.keys(p._weekRows).sort((a,b)=>weekOrder(b)-weekOrder(a));
+          const isOpen=open[key];
+          return (
+            <tbody key={pi}>
+              <tr className="border-b border-slate-100 cursor-pointer hover:bg-orange-50 transition-colors" onClick={()=>toggle(key)}>
+                {showAllTypes && <td className="px-4 py-3"><AdTag t={p.ad_type}/></td>}
+                {showAllTypes && <td className="px-4 py-3"><BrandTag b={p.brand}/></td>}
+                <td className="px-4 py-3">
+                  <ProductCell row={p}/>
+                </td>
+                {renderDataCells(ps,p.ad_type).map((v,i)=>(
+                  <td key={i} className="px-4 py-3 text-right font-bold text-slate-700">{v}</td>
+                ))}
+              </tr>
+              {isOpen && weeks.map(w=>{
+                const wr=p._weekRows[w];
+                const ws=aggRows(wr);
+                return (
+                  <tr key={w} className="bg-slate-50/60 border-b border-slate-100">
+                    <td className={`px-4 py-2 pl-${showAllTypes?16:10} text-slate-500 font-bold text-[12px]`} colSpan={showAllTypes?3:1}>{w}</td>
+                    {renderDataCells(ws,p.ad_type).map((v,i)=>(
+                      <td key={i} className="px-4 py-2 text-right text-slate-500 text-[12px] font-bold">{v}</td>
+                    ))}
+                  </tr>
+                );
+              })}
+            </tbody>
+          );
+        })}
+      </table>
+    </div>
+  );
+}
+
+// ── 메인 앱 ──
+function App() {
+  const [rawData,  setRawData]  = useState([]);
+  const [loading,  setLoading]  = useState(true);
+  const [error,    setError]    = useState(null);
+  const [brand,    setBrand]    = useState("통합");
+  const [adType,   setAdType]   = useState("전체");
+  const [convBasis,setConvBasis]= useState("1일");
+  const [viewMode, setViewMode] = useState("주차별");
+  const [showCmp,  setShowCmp]  = useState(false);
+
+  const thisMonth = useMemo(()=>{
+    const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+  },[]);
+  const [dateStart, setDateStart] = useState(()=>{
+    const d=new Date(); const ym=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+    return `${ym}-01`;
+  });
+  const [dateEnd, setDateEnd] = useState(()=>{
+    const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(new Date(d.getFullYear(),d.getMonth()+1,0).getDate()).padStart(2,"0")}`;
+  });
+  const [activeMonth, setActiveMonth] = useState(()=>{
+    const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+  });
+
+  const availableMonths = useMemo(()=>
+    [...new Set(rawData.map(r=>r.date?.substring(0,7)))].filter(Boolean).sort().reverse()
+  ,[rawData]);
+
+  const selectMonth = useCallback((ym)=>{
+    const [y,m]=ym.split("-");
+    const last=new Date(+y,+m,0).getDate();
+    setDateStart(`${ym}-01`);
+    setDateEnd(`${ym}-${String(last).padStart(2,"0")}`);
+    setActiveMonth(ym);
+  },[]);
+
+  useEffect(()=>{
+    const url = "output/data.csv?t="+Date.now();
+    Papa.parse(url, {
+      download: true, header: true, skipEmptyLines: true,
+      complete: res => { setRawData(res.data); setLoading(false); },
+      error: () => {
+        Papa.parse("data.csv?t="+Date.now(), {
+          download:true, header:true, skipEmptyLines:true,
+          complete: res => { setRawData(res.data); setLoading(false); },
+          error: e => { setError("data.csv 로드 실패: "+e.message); setLoading(false); }
+        });
+      }
+    });
+  },[]);
+
+  const filtered = useMemo(()=>{
+    let d = rawData;
+    if(brand!=="통합") d = d.filter(r=>r.brand===brand);
+    if(adType!=="전체") d = d.filter(r=>r.ad_type===adType);
+    if(dateStart) d = d.filter(r=>r.date>=dateStart);
+    if(dateEnd)   d = d.filter(r=>r.date<=dateEnd);
+    return d;
+  },[rawData,brand,adType,dateStart,dateEnd]);
+
+  // KPI 집계 (선택 기간 전체)
+  const kpi = useMemo(()=>{
+    if(!filtered.length) return null;
+    const rows=filtered;
+    const spend=rows.reduce((a,r)=>a+(n(r.spend)||0),0);
+    const imp=rows.reduce((a,r)=>a+(n(r.impressions)||0),0);
+    const clk=rows.reduce((a,r)=>a+(n(r.clicks)||0),0);
+    const rev1=rows.reduce((a,r)=>a+(n(r.revenue_1d)||0),0);
+    const rev14=rows.reduce((a,r)=>a+(n(r.revenue_14d)||0),0);
+    const ord1=rows.reduce((a,r)=>a+(n(r.orders_1d)||0),0);
+    const ord14=rows.reduce((a,r)=>a+(n(r.orders_14d)||0),0);
+    const newCust=rows.reduce((a,r)=>a+(n(r.new_customers)||0),0);
+    const newRev=rows.reduce((a,r)=>a+(n(r.new_revenue)||0),0);
+    const rev=convBasis==="14일"?rev14:rev1;
+    const ord=convBasis==="14일"?ord14:ord1;
+    const roas=spend>0?rev/spend:0;
+    const newRoas=spend>0?newRev/spend:0;
+    const cpm=imp>0?spend/imp*1000:0;
+    const cpc=clk>0?spend/clk:0;
+    const ctr=imp>0?clk/imp:0;
+    const costPerNew=newCust>0?spend/newCust:0;
+    const dates=[...new Set(rows.map(r=>r.date))].sort();
+    const period=dates.length===0?"":dates.length===1?dates[0]:`${dates[0]} ~ ${dates[dates.length-1]}`;
+    return {spend,imp,clk,rev,ord,roas,newCust,newRev,newRoas,cpm,cpc,ctr,costPerNew,period};
+  },[filtered,convBasis]);
+
+  const kpiCards = useMemo(()=>{
+    if(!kpi) return [];
+    if(adType==="NCA") return [
+      {label:"광고비",        value:fKrw(kpi.spend),    sub:kpi.period,          color:"text-orange-600"},
+      {label:"노출수",        value:fNum(kpi.imp),       sub:`CTR ${fPct(kpi.ctr)}`, color:"text-slate-500"},
+      {label:"클릭수",        value:fNum(kpi.clk),       sub:null,              color:"text-blue-600"},
+      {label:"신규 고객수",   value:fNum(kpi.newCust),   sub:`고객당 ${fKrw(kpi.costPerNew)}`, color:"text-purple-600"},
+      {label:"첫구매 매출",    value:fKrw(kpi.newRev),    sub:null,              color:"text-green-600"},
+    ];
+    if(adType==="BA") return [
+      {label:"광고비",  value:fKrw(kpi.spend),   sub:kpi.period,          color:"text-orange-600"},
+      {label:"노출수",  value:fNum(kpi.imp),      sub:`CTR ${fPct(kpi.ctr)}`, color:"text-slate-500"},
+      {label:"클릭수",  value:fNum(kpi.clk),      sub:null,              color:"text-blue-600"},
+      {label:"CPM",     value:fKrw(kpi.cpm),      sub:null,              color:"text-purple-600"},
+      {label:"매출",    value:fKrw(kpi.rev),       sub:null,              color:"text-green-600"},
+      {label:"ROAS",    value:fRoas(kpi.roas),     sub:null,              color:"text-green-600"},
+    ];
+    return [
+      {label:"광고비",  value:fKrw(kpi.spend),   sub:kpi.period,               color:"text-orange-600"},
+      {label:"노출수",  value:fNum(kpi.imp),      sub:`CTR ${fPct(kpi.ctr)}`, color:"text-slate-500"},
+      {label:"클릭수",  value:fNum(kpi.clk),      sub:`CPC ${fKrw(kpi.cpc)}`, color:"text-blue-600"},
+      {label:"전환수",  value:fNum(kpi.ord),       sub:null,                  color:"text-amber-600"},
+      {label:"매출",    value:fKrw(kpi.rev),       sub:null,                  color:"text-green-600"},
+      {label:"ROAS",    value:fRoas(kpi.roas),     sub:null,                  color:"text-green-600"},
+    ];
+  },[kpi,adType]);
+
+  if(loading) return <div className="flex items-center justify-center min-h-screen"><div className="text-slate-400 font-bold text-[15px]">데이터 로드 중...</div></div>;
+  if(error)   return <div className="flex items-center justify-center min-h-screen"><div className="text-red-500 font-bold text-[14px]">{error}</div></div>;
+
+  return (
+    <div className="max-w-6xl mx-auto px-4 py-6">
+      {/* 헤더 */}
+      <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
+        <div>
+          <h1 className="text-[20px] font-black text-slate-900">더건강한 쿠팡 광고</h1>
+          <div className="text-[12px] text-slate-400 font-bold mt-0.5">{rawData.length.toLocaleString()}행 로드됨</div>
+        </div>
+        <button onClick={()=>setShowCmp(p=>!p)}
+          className={`px-4 py-2 rounded-xl text-[13px] font-bold border transition-all ${showCmp?"bg-slate-800 text-white border-slate-800":"bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
+          기간 비교
+        </button>
+      </div>
+
+      {/* 필터 탭 */}
+      <div className="flex flex-wrap gap-3 mb-4">
+        <div className="flex gap-1.5 bg-slate-100 p-1 rounded-xl">
+          {["통합","타이거모닝","팔팔호랑이"].map(b=>(
+            <button key={b} onClick={()=>setBrand(b)}
+              className={`px-4 py-1.5 rounded-lg text-[13px] font-bold transition-all ${brand===b?"bg-white text-slate-900 shadow-sm":"text-slate-500 hover:text-slate-700"}`}>{b}</button>
+          ))}
+        </div>
+        <div className="flex gap-1.5 bg-slate-100 p-1 rounded-xl">
+          {["전체","PA","NCA","BA"].map(t=>(
+            <button key={t} onClick={()=>setAdType(t)}
+              className={`px-4 py-1.5 rounded-lg text-[13px] font-bold transition-all ${adType===t?"bg-white text-slate-900 shadow-sm":"text-slate-500 hover:text-slate-700"}`}>{t}</button>
+          ))}
+        </div>
+        <div className="flex gap-1.5 bg-slate-100 p-1 rounded-xl">
+          {["1일","14일"].map(c=>(
+            <button key={c} onClick={()=>setConvBasis(c)}
+              className={`px-4 py-1.5 rounded-lg text-[13px] font-bold transition-all ${convBasis===c?"bg-white text-slate-900 shadow-sm":"text-slate-500 hover:text-slate-700"}`}>{c}</button>
+          ))}
+        </div>
+        <div className="flex gap-1.5 bg-slate-100 p-1 rounded-xl">
+          {["주차별","상품별"].map(v=>(
+            <button key={v} onClick={()=>setViewMode(v)}
+              className={`px-4 py-1.5 rounded-lg text-[13px] font-bold transition-all ${viewMode===v?"bg-white text-slate-900 shadow-sm":"text-slate-500 hover:text-slate-700"}`}>{v}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* 날짜 필터 */}
+      <div className="flex flex-wrap gap-3 mb-4 items-center">
+        <div className="flex gap-1 bg-slate-100 p-1 rounded-xl flex-wrap">
+          <button onClick={()=>{setDateStart("");setDateEnd("");setActiveMonth("전체");}}
+            className={`px-3 py-1.5 rounded-lg text-[13px] font-bold transition-all ${activeMonth==="전체"?"bg-white text-slate-900 shadow-sm":"text-slate-500 hover:text-slate-700"}`}>전체</button>
+          {availableMonths.map(ym=>{
+            const [,mm]=ym.split("-");
+            const label=ym===thisMonth?"이번달":`${+mm}월`;
+            return (
+              <button key={ym} onClick={()=>selectMonth(ym)}
+                className={`px-3 py-1.5 rounded-lg text-[13px] font-bold transition-all ${activeMonth===ym?"bg-white text-orange-600 shadow-sm":"text-slate-500 hover:text-slate-700"}`}>
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[12px] text-slate-400 font-bold">직접 설정</span>
+          <input type="date" value={dateStart} onChange={e=>{setDateStart(e.target.value);setActiveMonth("custom");}}
+            className="border border-slate-200 rounded-lg px-2 py-1.5 text-[13px] bg-white"/>
+          <span className="text-slate-400 font-bold">~</span>
+          <input type="date" value={dateEnd} onChange={e=>{setDateEnd(e.target.value);setActiveMonth("custom");}}
+            className="border border-slate-200 rounded-lg px-2 py-1.5 text-[13px] bg-white"/>
+          {activeMonth==="custom" && <button onClick={()=>{setDateStart("");setDateEnd("");setActiveMonth("전체");}}
+            className="text-[12px] text-slate-400 hover:text-red-400 font-bold px-1 transition-colors">✕ 초기화</button>}
+        </div>
+      </div>
+
+      {/* 기간 비교 */}
+      {showCmp && <ComparePanel allData={filtered} convBasis={convBasis}/>}
+
+      {/* KPI 카드 */}
+      {kpi && (
+        <div className={`grid gap-3 mb-5 ${kpiCards.length===5?"grid-cols-2 sm:grid-cols-5":"grid-cols-2 sm:grid-cols-3 lg:grid-cols-6"}`}>
+          {kpiCards.map((c,i)=><KpiCard key={i} {...c}/>)}
+        </div>
+      )}
+
+      {/* 테이블 */}
+      {filtered.length===0
+        ? <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center text-slate-400 font-bold">데이터가 없습니다</div>
+        : viewMode==="주차별"
+          ? <WeekView data={filtered} adType={adType} convBasis={convBasis}/>
+          : <ProductView data={filtered} adType={adType} brand={brand} convBasis={convBasis}/>
+      }
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
