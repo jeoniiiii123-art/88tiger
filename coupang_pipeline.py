@@ -260,10 +260,15 @@ def load_ba(path: Path) -> pd.DataFrame:
     df = read_excel_safe(path)
     df.columns = df.columns.str.strip()
 
-    date_str = date_from_filename(path, 0)
-    if not date_str:
-        print(f"  [BA 경고] 날짜 파싱 실패: {path.name}")
+    date_col = find_col(df, "날짜")
+    if date_col is None:
+        print(f"  [BA 경고] 날짜 컬럼 없음: {path.name}")
         return pd.DataFrame()
+
+    df["_date"] = pd.to_datetime(
+        df[date_col].astype(str).str.strip().str[:8], format="%Y%m%d", errors="coerce"
+    )
+    df = df.dropna(subset=["_date"]).copy()
 
     camp_col = find_col(df, "캠페인명")
     prod_col = find_col(df, "광고집행 상품명")
@@ -284,7 +289,7 @@ def load_ba(path: Path) -> pd.DataFrame:
 
     n = len(df)
     out = pd.DataFrame(index=range(n))
-    out["date"]      = date_str
+    out["_date"]     = df["_date"].values
     out["campaign"]  = safe_series(df, camp_col, n).values
     out["full_name"] = safe_series(df, prod_col, n).values
     out["option_id"] = safe_series(df, opt_col, n).astype(str).values
@@ -298,6 +303,7 @@ def load_ba(path: Path) -> pd.DataFrame:
     out["brand"]        = "BA광고"
     out["display_name"] = safe_series(df, camp_col, n).values
     out["ad_type"]      = "BA"
+    out["date"]         = pd.to_datetime(out["_date"]).dt.strftime("%Y-%m-%d")
     out["ctr"]          = out["clicks"] / out["impressions"].replace(0, float("nan"))
     out["cpc"]          = pd.NA
     out["cpm"]          = out["spend"] / out["impressions"].replace(0, float("nan")) * 1000
@@ -307,7 +313,7 @@ def load_ba(path: Path) -> pd.DataFrame:
     out["cost_per_new_customer"] = pd.NA
     out["new_revenue"]  = pd.NA
     out["new_roas"]     = pd.NA
-    out["week"] = get_week_label(pd.to_datetime(date_str).date())
+    out["week"]         = pd.to_datetime(out["_date"]).apply(lambda d: get_week_label(d.date()))
 
     return out[OUTPUT_COLS]
 
