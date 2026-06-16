@@ -271,7 +271,8 @@ def load_ba(path: Path) -> pd.DataFrame:
     df = df.dropna(subset=["_date"]).copy()
 
     camp_col = find_col(df, "캠페인명")
-    prod_col = find_col(df, "광고집행 상품명")
+    prod_col = find_col(df, "상품") or find_col(df, "광고집행 상품명")
+    ad_col   = find_col(df, "광고명")
     opt_col  = find_col(df, "광고집행 옵션ID")
 
     col_map = {
@@ -300,8 +301,19 @@ def load_ba(path: Path) -> pd.DataFrame:
     out["roas_1d"]  = clean_num(df["roas_1d_raw"])  if "roas_1d_raw"  in df.columns else pd.NA
     out["roas_14d"] = clean_num(df["roas_14d_raw"]) if "roas_14d_raw" in df.columns else pd.NA
 
-    out["brand"]        = "BA광고"
-    out["display_name"] = safe_series(df, camp_col, n).values
+    # 상품 → 광고명 → 캠페인명 순으로 브랜드 감지
+    prod_s = safe_series(df, prod_col, n)
+    ad_s   = safe_series(df, ad_col,   n)
+    camp_s = safe_series(df, camp_col, n)
+    def ba_brand(row):
+        for s in [row["prod"], row["ad"], row["camp"]]:
+            b = get_brand(s)
+            if b != "기타":
+                return b
+        return "기타"
+    brand_df = pd.DataFrame({"prod": prod_s.values, "ad": ad_s.values, "camp": camp_s.values})
+    out["brand"]        = brand_df.apply(ba_brand, axis=1)
+    out["display_name"] = camp_s.values
     out["ad_type"]      = "BA"
     out["date"]         = pd.to_datetime(out["_date"]).dt.strftime("%Y-%m-%d")
     out["ctr"]          = out["clicks"] / out["impressions"].replace(0, float("nan"))
