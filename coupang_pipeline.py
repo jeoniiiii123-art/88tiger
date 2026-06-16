@@ -356,9 +356,9 @@ def load_ba(path: Path) -> pd.DataFrame:
 def run_pipeline():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    pa_files  = sorted(RAW_PA_DIR.glob("*.xlsx"))  if RAW_PA_DIR.exists()  else []
-    nca_files = sorted(RAW_NCA_DIR.glob("*.xlsx")) if RAW_NCA_DIR.exists() else []
-    ba_files  = sorted(RAW_BA_DIR.glob("*.xlsx"))  if RAW_BA_DIR.exists()  else []
+    pa_files  = sorted(f for f in RAW_PA_DIR.glob("*.xlsx")  if not f.name.startswith("~$")) if RAW_PA_DIR.exists()  else []
+    nca_files = sorted(f for f in RAW_NCA_DIR.glob("*.xlsx") if not f.name.startswith("~$")) if RAW_NCA_DIR.exists() else []
+    ba_files  = sorted(f for f in RAW_BA_DIR.glob("*.xlsx")  if not f.name.startswith("~$")) if RAW_BA_DIR.exists()  else []
 
     if not pa_files and not nca_files and not ba_files:
         print("❌ raw 파일이 없습니다. raw/pa, raw/nca, raw/ba 폴더를 확인하세요.")
