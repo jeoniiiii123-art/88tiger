@@ -33,14 +33,22 @@ DEDUP_KEY = ["date", "brand", "ad_type", "option_id"]
 # ─────────────────────────────────────────
 
 def get_week_label(d):
-    """date → '6월 1주차'  (월요일 시작, 월의 첫 번째 월요일 기준)"""
+    """date → '6월 1주차'  (월요일 시작)
+    월 첫날이 월요일이 아니면 → 첫 월요일 이전을 1주차, 첫 월요일부터 2주차
+    월 첫날이 월요일이면    → 첫 월요일부터 1주차
+    """
     first_day = d.replace(day=1)
     days_to_mon = (7 - first_day.weekday()) % 7
     first_mon = first_day + timedelta(days=days_to_mon)
-    if d < first_mon:
+    if first_mon == first_day:
+        # 월 첫날이 월요일: 바로 1주차 시작
+        week_num = (d - first_mon).days // 7 + 1
+    elif d < first_mon:
+        # 첫 월요일 이전(월 초 토막 기간) → 1주차
         week_num = 1
     else:
-        week_num = (d - first_mon).days // 7 + 1
+        # 첫 월요일부터 → 2주차 시작
+        week_num = (d - first_mon).days // 7 + 2
     return f"{d.month}월 {week_num}주차"
 
 
