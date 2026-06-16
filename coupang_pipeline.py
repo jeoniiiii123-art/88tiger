@@ -201,13 +201,19 @@ def load_nca(path: Path) -> pd.DataFrame:
     df = read_excel_safe(path)
     df.columns = df.columns.str.strip()
 
-    date_str = date_from_filename(path, 0)
-    if not date_str:
-        print(f"  [NCA 경고] 날짜 파싱 실패: {path.name}")
+    date_col = find_col(df, "날짜")
+    if date_col is None:
+        print(f"  [NCA 경고] 날짜 컬럼 없음: {path.name}")
         return pd.DataFrame()
+
+    df["_date"] = pd.to_datetime(
+        df[date_col].astype(str).str.strip().str[:8], format="%Y%m%d", errors="coerce"
+    )
+    df = df.dropna(subset=["_date"]).copy()
 
     camp_col = find_col(df, "캠페인")
     prod_col = find_col(df, "광고집행 상품명")
+    ad_col   = find_col(df, "광고 이름") or find_col(df, "광고명")
     opt_col  = find_col(df, "옵션")
 
     col_map = {
@@ -224,7 +230,7 @@ def load_nca(path: Path) -> pd.DataFrame:
 
     n = len(df)
     out = pd.DataFrame(index=range(n))
-    out["date"]      = date_str
+    out["_date"]     = df["_date"].values
     out["campaign"]  = safe_series(df, camp_col, n).values
     out["full_name"] = safe_series(df, prod_col, n).values
     out["option_id"] = safe_series(df, opt_col, n).astype(str).values
@@ -234,9 +240,22 @@ def load_nca(path: Path) -> pd.DataFrame:
 
     out["new_roas"] = clean_num(df["new_roas_raw"]) if "new_roas_raw" in df.columns else pd.NA
 
-    out["brand"]        = out["full_name"].apply(get_brand)
+    # 상품명 → 광고명 순으로 브랜드 감지
+    prod_s = safe_series(df, prod_col, n)
+    ad_s   = safe_series(df, ad_col,   n)
+    camp_s = safe_series(df, camp_col, n)
+    def nca_brand(row):
+        for s in [row["prod"], row["ad"], row["camp"]]:
+            b = get_brand(s)
+            if b != "기타":
+                return b
+        return "기타"
+    brand_df = pd.DataFrame({"prod": prod_s.values, "ad": ad_s.values, "camp": camp_s.values})
+
+    out["brand"]        = brand_df.apply(nca_brand, axis=1)
     out["display_name"] = out["full_name"].apply(get_display_name)
     out["ad_type"]      = "NCA"
+    out["date"]         = pd.to_datetime(out["_date"]).dt.strftime("%Y-%m-%d")
     out["ctr"]          = out["clicks"] / out["impressions"].replace(0, float("nan"))
     out["cpc"]          = pd.NA
     out["cpm"]          = pd.NA
@@ -247,7 +266,7 @@ def load_nca(path: Path) -> pd.DataFrame:
     out["revenue_14d"]  = pd.NA
     out["roas_14d"]     = pd.NA
     out["video_cpm"]    = pd.NA
-    out["week"]         = get_week_label(pd.to_datetime(date_str).date())
+    out["week"]         = pd.to_datetime(out["_date"]).apply(lambda d: get_week_label(d.date()))
 
     return out[OUTPUT_COLS]
 
