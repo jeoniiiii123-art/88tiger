@@ -350,15 +350,45 @@ def load_ba(path: Path) -> pd.DataFrame:
 
 
 # ─────────────────────────────────────────
+# 겹치는 파일 제거 (예: 0601-0614 vs 0601-0615 → 짧은 파일 제외)
+# ─────────────────────────────────────────
+
+def exclude_superseded(files: list) -> list:
+    """날짜 범위가 다른 파일에 완전히 포함되는 파일 제거."""
+    def parse_range(f):
+        dates = re.findall(r"(20\d{6})", f.stem)
+        return (dates[0], dates[1]) if len(dates) >= 2 else (None, None)
+
+    ranges = [(f, *parse_range(f)) for f in files]
+    keep = []
+    for f, s, e in ranges:
+        if s is None:
+            keep.append(f)
+            continue
+        # 다른 파일이 이 파일의 날짜 범위를 완전히 포함하면 제외
+        # (시작일 같고 종료일이 더 길거나, 더 넓은 범위를 포함)
+        superseded = any(
+            os <= s and oe > e
+            for _, os, oe in ranges
+            if os and oe and (os, oe) != (s, e)
+        )
+        if superseded:
+            print(f"  [파일 제외] {f.name}  ← 더 긴 기간 파일이 있어 건너뜀")
+        else:
+            keep.append(f)
+    return keep
+
+
+# ─────────────────────────────────────────
 # 파이프라인 실행
 # ─────────────────────────────────────────
 
 def run_pipeline():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    pa_files  = sorted(f for f in RAW_PA_DIR.glob("*.xlsx")  if not f.name.startswith("~$")) if RAW_PA_DIR.exists()  else []
-    nca_files = sorted(f for f in RAW_NCA_DIR.glob("*.xlsx") if not f.name.startswith("~$")) if RAW_NCA_DIR.exists() else []
-    ba_files  = sorted(f for f in RAW_BA_DIR.glob("*.xlsx")  if not f.name.startswith("~$")) if RAW_BA_DIR.exists()  else []
+    pa_files  = exclude_superseded(sorted(f for f in RAW_PA_DIR.glob("*.xlsx")  if not f.name.startswith("~$"))) if RAW_PA_DIR.exists()  else []
+    nca_files = exclude_superseded(sorted(f for f in RAW_NCA_DIR.glob("*.xlsx") if not f.name.startswith("~$"))) if RAW_NCA_DIR.exists() else []
+    ba_files  = exclude_superseded(sorted(f for f in RAW_BA_DIR.glob("*.xlsx")  if not f.name.startswith("~$"))) if RAW_BA_DIR.exists()  else []
 
     if not pa_files and not nca_files and not ba_files:
         print("❌ raw 파일이 없습니다. raw/pa, raw/nca, raw/ba 폴더를 확인하세요.")
