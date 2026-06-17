@@ -52,7 +52,24 @@
 <div id="root"></div>
 
 <script type="text/babel">
-const { useState, useMemo, useEffect, useCallback, useRef } = React;
+const { useState, useMemo, useEffect, useCallback, useRef, Component } = React;
+
+class ErrorBoundary extends Component {
+  constructor(props) { super(props); this.state = {error: null}; }
+  static getDerivedStateFromError(e) { return {error: e}; }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{padding:"40px",fontFamily:"monospace",background:"#fff1f0",border:"2px solid #ff4d4f",margin:"20px",borderRadius:"8px"}}>
+          <h2 style={{color:"#cf1322"}}>대시보드 오류 발생</h2>
+          <p style={{color:"#333",whiteSpace:"pre-wrap"}}>{String(this.state.error)}</p>
+          <p style={{color:"#666",fontSize:"12px"}}>{this.state.error?.stack}</p>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // ── 포맷터 ──
 const fKrw  = v => isNaN(v)||v===null||v===""? "-" : "₩" + Math.round(+v).toLocaleString("ko-KR");
@@ -656,7 +673,7 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+ReactDOM.createRoot(document.getElementById("root")).render(<ErrorBoundary><App/></ErrorBoundary>);
 </script>
 </body>
 </html>
