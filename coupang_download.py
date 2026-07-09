@@ -215,29 +215,82 @@ class CoupangDownloader:
         print(f"  ✓ {ADVERTISER} 진입 완료")
 
     # ── 날짜 입력 ────────────────────────────────────────────────
+    def _click_prev_month_btn(self):
+        """달력 '이전 달'(< 버튼) 클릭 — super(year) 버튼 제외"""
+        # 가장 정확: super 클래스가 없는 ant-picker-prev-icon 부모 버튼
+        if self._try_click(By.XPATH,
+            "//button[.//*[contains(@class,'ant-picker-prev-icon')"
+            " and not(contains(@class,'super'))]]",
+            timeout=2):
+            return True
+        # aria-label 방식
+        for lbl in ['이전 달', 'Previous Month']:
+            if self._try_click(By.XPATH, f"//button[@aria-label='{lbl}']", timeout=1):
+                return True
+        # fallback: ant-picker-header 안의 버튼 index 1 (순서: <<, <, >, >>)
+        btns = self.driver.find_elements(By.XPATH,
+            "//div[contains(@class,'ant-picker-header')]//button")
+        if len(btns) >= 2:
+            btns[1].click()
+            return True
+        return False
+
+    def _click_date_cell(self, ds: str) -> bool:
+        """JS로 DOM 전체에서 title/aria-label이 ds(YYYY-MM-DD)인 셀을 클릭. 성공 시 True."""
+        return self.driver.execute_script("""
+            var ds = arguments[0];
+            var els = document.querySelectorAll('td, div, button');
+            for (var el of els) {
+                if (el.title === ds || el.getAttribute('aria-label') === ds) {
+                    el.scrollIntoView({block:'center'});
+                    el.click();
+                    return true;
+                }
+            }
+            return false;
+        """, ds)
+
     def _set_dates(self):
-        # "기간 설정" 라디오 버튼 클릭 (페이지 로드 대기 포함)
+        from datetime import date as _date
+
         self._click(By.XPATH,
             "//label[contains(.,'기간 설정')]"
             " | //span[contains(.,'기간 설정')][ancestor::label]",
             timeout=35)
         time.sleep(0.8)
 
-        # 시작일 input 클릭 → 달력 팝업 열기
         start_inp = self._find(By.XPATH, "//input[@placeholder='시작일']")
         start_inp.click()
-        time.sleep(0.5)
+        time.sleep(0.8)
 
-        # 달력에서 시작일/종료일 셀 클릭 (title 또는 data 속성 사용)
+        # 오늘 기준으로 몇 달 이전인지 계산 → 정확히 그 횟수만 클릭
+        today = _date.today()
+        months_back = (today.year * 12 + today.month) - \
+                      (self.start_date.year * 12 + self.start_date.month)
+        print(f"  달력 이전 달 이동: {months_back}회")
+        for _ in range(months_back):
+            self._click_prev_month_btn()
+            time.sleep(0.3)
+
         for ds, label in [(self.start_str, "시작일"), (self.end_str, "종료일")]:
-            self._click(By.XPATH,
-                f"//td[@title='{ds}']"
-                f" | //td[@aria-label='{ds}']"
-                f" | //div[@title='{ds}']"
-                f" | //button[@aria-label='{ds}']",
-                timeout=8)
+            # 방법 1: JS로 title/aria-label 직접 매칭
+            if self._click_date_cell(ds):
+                print(f"  → {label} 선택(JS): {ds}")
+            else:
+                # 방법 2: input에 직접 키보드 입력
+                inp_ph = "시작일" if label == "시작일" else "종료일"
+                try:
+                    inp = self.driver.find_element(By.XPATH,
+                        f"//input[@placeholder='{inp_ph}']")
+                    inp.click()
+                    time.sleep(0.2)
+                    inp.send_keys(Keys.CONTROL + 'a')
+                    inp.send_keys(ds)
+                    inp.send_keys(Keys.RETURN)
+                    print(f"  → {label} 키보드 입력: {ds}")
+                except Exception as e:
+                    print(f"  [경고] {label} {ds} 선택 실패: {e}")
             time.sleep(0.4)
-            print(f"  → {label} 선택: {ds}")
 
         time.sleep(0.5)
         print(f"  → 날짜 설정: {self.start_str} ~ {self.end_str}")
@@ -433,7 +486,7 @@ def main():
         start = end.replace(day=1)
     else:
         end   = today - timedelta(days=1)   # 어제
-        start = today.replace(day=1)        # 이번 달 1일
+        start = end.replace(day=1)          # 어제 기준 달의 1일 (월초엔 전달 1일)
 
     print(f"다운로드 기간: {start} ~ {end}")
     CoupangDownloader(start_date=start, end_date=end, headless=False).run()
