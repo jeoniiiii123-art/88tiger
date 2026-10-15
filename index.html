@@ -78,6 +78,7 @@ const fPct  = (v,d=2) => (v===null||v===""||isNaN(v)) ? "-" : (+v*100).toFixed(d
 const fRoas = v => (v===null||v===""||isNaN(v)) ? "-" : (+v*100).toFixed(1)+"%";
 
 const n     = v => (v===null||v===""||v==="nan"||v==="NaN"||v===undefined) ? null : +v;
+const TIGER_ONLY_FROM = "2026-10-14";
 
 // ── 주차 정렬 ──
 function weekOrder(w){
@@ -519,6 +520,7 @@ function App() {
 
   const filtered = useMemo(()=>{
     let d = rawData;
+    d = d.filter(r=>r.date<TIGER_ONLY_FROM||r.brand==="타이거모닝");
     if(brand!=="통합") d = d.filter(r=>r.brand===brand);
     if(adType!=="전체") d = d.filter(r=>r.ad_type===adType);
     if(dateStart) d = d.filter(r=>r.date>=dateStart);
